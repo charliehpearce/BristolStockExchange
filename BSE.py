@@ -1,3 +1,13 @@
+"""
+Changelog:
+- Changed verbose print out of publish LOB
+- Stream write to file
+
+To Do:
+How shall drift be included?
+"""
+
+
 # -*- coding: utf-8 -*-
 #
 # BSE: The Bristol Stock Exchange
@@ -49,6 +59,7 @@
 import sys
 import math
 import random
+import json
 
 bse_sys_minprice = 1  # minimum price in the system, in cents/pennies
 bse_sys_maxprice = 1000  # maximum price in the system, in cents/pennies
@@ -132,8 +143,7 @@ class Orderbook_half:
             self.best_price = None
             self.best_tid = None
 
-        if lob_verbose:
-            print(self.lob)
+
 
     def book_add(self, order):
         # add order to the dictionary holding the list of orders
@@ -350,6 +360,7 @@ class Exchange(Orderbook):
                                'lob': self.asks.lob_anon}
         public_data['QID'] = self.quote_id
         public_data['tape'] = self.tape
+
         if verbose:
             print('publish_lob: t=%d' % time)
             print('BID_lob=%s' % public_data['bids']['lob'])
@@ -1317,6 +1328,10 @@ def customer_orders(time, last_update, traders, trader_stats, os, pending, verbo
                 new_pending.append(order)
     return [new_pending, cancellations]
 
+def write_to_file(file, lob):
+    lob_json = json.dumps(lob)
+    with open(file, "a") as market_session:
+        market_session.write(lob_json)
 
 # one session in the market
 def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdump, dump_all, verbose):
@@ -1395,6 +1410,14 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
 
             # traders respond to whatever happened
             lob = exchange.publish_lob(time, lob_verbose)
+
+            # dump LOB to session LOB JSON
+            data_dump = {}
+            data_dump['time'] = lob['time']
+            data_dump['bids'] = lob['bids']['lob']
+            data_dump['asks'] = lob['asks']['lob']
+            write_to_file(f'market_session_{sess_id}.json',data_dump)
+
             for t in traders:
                 # NB respond just updates trader's internal variables
                 # doesn't alter the LOB, so processing each trader in
@@ -1433,7 +1456,7 @@ if __name__ == "__main__":
 
     # set up common parameters for all market sessions
     start_time = 0.0
-    end_time = 600.0
+    end_time = 86400.0
     duration = end_time - start_time
 
 
@@ -1485,10 +1508,10 @@ if __name__ == "__main__":
 
     # run a sequence of trials, one session per trial
 
-    verbose = True
+    verbose = False
 
     # n_trials is how many trials (i.e. market sessions) to run in total
-    n_trials = 6
+    n_trials = 1
 
     # n_recorded is how many trials (i.e. market sessions) to write full data-files for
     n_trials_recorded = 3
@@ -1503,7 +1526,7 @@ if __name__ == "__main__":
         if trial > n_trials_recorded:
             dump_all = False
         else:
-            dump_all = True
+            dump_all = False
 
         market_session(trial_id, start_time, end_time, traders_spec, order_sched, tdump, dump_all, verbose)
         tdump.flush()
@@ -1554,4 +1577,3 @@ if __name__ == "__main__":
     # tdump.close()
     #
     # print(trialnumber)
-
