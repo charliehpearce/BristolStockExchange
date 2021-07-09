@@ -60,6 +60,7 @@ import sys
 import math
 import random
 import json
+from GBM import Brownian
 
 bse_sys_minprice = 1  # minimum price in the system, in cents/pennies
 bse_sys_maxprice = 1000  # maximum price in the system, in cents/pennies
@@ -1353,6 +1354,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
     # timestep set so that can process all traders in one second
     # NB minimum interarrival time of customer orders may be much less than this!!
     timestep = 1.0 / float(trader_stats['n_buyers'] + trader_stats['n_sellers'])
+    print(f'Timestep (dt) : {timestep}')
 
     duration = float(endtime - starttime)
 
@@ -1445,32 +1447,54 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
     # write trade_stats for this session (NB end-of-session summary only)
     trade_stats(sess_id, traders, tdump, time, exchange.publish_lob(time, lob_verbose))
 
-
-
 #############################
 
 # # Below here is where we set up and run a series of experiments
 
+class GBMOffset(Brownian):
+    def __init__(self, dt, deltaT, mu_fn, sigma_fn) -> None:
+        super().__init__()
+        self.dt = dt
+        self.gbm_offset_vec = self.stock_price(mu_fn=mu_fn,sigma_fn=sigma_fn,\
+             dt=dt, deltaT=deltaT)
+
+    def GBM_schedule_offsetfn(self, t):
+        # get index for time t
+        # return item
+        try:
+            offset = self.gbm_offset_vec[math.floor(t/self.dt)]
+            return int(round(offset, 0))
+        except:
+            # For some reason, some time idx seem to go off the end
+            return self.gbm_offset_vec[-1]
 
 if __name__ == "__main__":
+    print( """
+    █████╗ ███████╗███████╗
+    ██╔══██╗██╔════╝██╔════╝
+    ██████╔╝███████╗█████╗  
+    ██╔══██╗╚════██║██╔══╝  
+    ██████╔╝███████║███████╗
+    ╚═════╝ ╚══════╝╚══════╝
+     Bristol Stock Exchange
+    """)
 
     # set up common parameters for all market sessions
     start_time = 0.0
-    end_time = 86400.0
+    end_time = 2400.0
     duration = end_time - start_time
 
-
-    # schedule_offsetfn returns time-dependent offset, to be added to schedule prices
-    def schedule_offsetfn(t):
-
-        pi2 = math.pi * 2
-        c = math.pi * 3000
-        wavelength = t / c
-        gradient = 100 * t / (c / pi2)
-        amplitude = 100 * t / (c / pi2)
-        offset = gradient + amplitude * math.sin(wavelength * t)
-        return int(round(offset, 0))
-
+    # To give the appearance of GBM, a function can be generated for the 
+    # schedule offset function
+    dt = 0.0125
+    sigma_fn = lambda x: 0.67 # define volatitlity function
+    mu_fn = lambda x: 0.20 # define drift function
+    
+    # Create class
+    gmbo = GBMOffset(dt=dt, deltaT=duration, mu_fn=mu_fn, sigma_fn=sigma_fn)
+    # Assign function to varible
+    GBMOffsetFN = gmbo.GBM_schedule_offsetfn
+    
     # Here is an example of how to use the offset function
     #
     # range1 = (10, 190, schedule_offsetfn)
@@ -1485,14 +1509,13 @@ if __name__ == "__main__":
     #                     {'from':2*duration/3, 'to':end_time, 'ranges':[range1], 'stepmode':'fixed'}
     #                   ]
 
-
     # The code below sets up symmetric supply and demand curves at prices from 50 to 150, P0=100
 
-    range1 = (50, 150)
+    range1 = (100, 120, GBMOffsetFN)
     supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}
                        ]
 
-    range2 = (50, 150)
+    range2 = (100, 120, GBMOffsetFN)
     demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}
                        ]
 
@@ -1526,7 +1549,9 @@ if __name__ == "__main__":
         if trial > n_trials_recorded:
             dump_all = False
         else:
-            dump_all = False
+            dump_all = True
+
+        dump_all = True
 
         market_session(trial_id, start_time, end_time, traders_spec, order_sched, tdump, dump_all, verbose)
         tdump.flush()
