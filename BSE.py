@@ -59,8 +59,10 @@ How shall drift be included?
 import sys
 import math
 import random
+
 import json
 from GBM import Brownian
+import numpy as np
 
 bse_sys_minprice = 1  # minimum price in the system, in cents/pennies
 bse_sys_maxprice = 1000  # maximum price in the system, in cents/pennies
@@ -1455,8 +1457,9 @@ class GBMOffset(Brownian):
     def __init__(self, dt, deltaT, mu_fn, sigma_fn) -> None:
         super().__init__()
         self.dt = dt
-        self.gbm_offset_vec = self.stock_price(mu_fn=mu_fn,sigma_fn=sigma_fn,\
-             dt=dt, deltaT=deltaT)
+        self.gbm_offset_vec = self.stock_price(mu_fn=mu_fn, sigma_fn=sigma_fn, dt=dt, deltaT=deltaT)
+
+        np.save('./offset.npy', np.array(self.gbm_offset_vec))
 
     def GBM_schedule_offsetfn(self, t):
         # get index for time t
@@ -1466,7 +1469,8 @@ class GBMOffset(Brownian):
             return int(round(offset, 0))
         except:
             # For some reason, some time idx seem to go off the end
-            return self.gbm_offset_vec[-1]
+            print('WARNING: schedule offset clipped')
+            return int(round(self.gbm_offset_vec[-1],0))
 
 if __name__ == "__main__":
     print( """
@@ -1487,13 +1491,15 @@ if __name__ == "__main__":
     # To give the appearance of GBM, a function can be generated for the 
     # schedule offset function
     dt = 0.0125
-    sigma_fn = lambda x: 0.67 # define volatitlity function
-    mu_fn = lambda x: 0.20 # define drift function
+    sigma_fn = lambda x: 0.6 # define volatitlity function
+    mu_fn = lambda x: 0.18 # define drift function
     
     # Create class
-    gmbo = GBMOffset(dt=dt, deltaT=duration, mu_fn=mu_fn, sigma_fn=sigma_fn)
+    gmbo = GBMOffset(dt=1, deltaT=duration, mu_fn=mu_fn, sigma_fn=sigma_fn)
+    
     # Assign function to varible
     GBMOffsetFN = gmbo.GBM_schedule_offsetfn
+    
     
     # Here is an example of how to use the offset function
     #

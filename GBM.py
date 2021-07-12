@@ -107,4 +107,4 @@ class Brownian():
         # Add two time series, take exponent, and multiply by the initial stock price
         s = s0 * (np.exp(stock_var + weiner_process))
 
-        return s
+        return s - s0
