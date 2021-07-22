@@ -60,8 +60,13 @@ import sys
 import math
 import random
 
+from GBM2 import Brownian
+from drift_class import Drift # Import needed for pickled fns
+
+import os
+import dill as pickle
 import json
-from GBM import Brownian
+
 import numpy as np
 
 bse_sys_minprice = 1  # minimum price in the system, in cents/pennies
@@ -1337,7 +1342,7 @@ def write_to_file(file, lob):
         market_session.write(lob_json)
 
 # one session in the market
-def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdump, dump_all, verbose):
+def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdump, dump_all, verbose, dump_dir):
 
     orders_verbose = False
     lob_verbose = False
@@ -1420,7 +1425,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
             data_dump['time'] = lob['time']
             data_dump['bids'] = lob['bids']['lob']
             data_dump['asks'] = lob['asks']['lob']
-            write_to_file(f'market_session_{sess_id}.json',data_dump)
+            write_to_file(os.path.join(dump_dir,f'market_session_{sess_id}.json'),data_dump)
 
             for t in traders:
                 # NB respond just updates trader's internal variables
@@ -1435,10 +1440,10 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
     if dump_all:
 
         # dump the tape (transactions only -- not dumping cancellations)
-        exchange.tape_dump(sess_id+'_transactions.csv', 'w', 'keep')
+        exchange.tape_dump(os.path.join(dump_dir,f'{sess_id}_transactions.csv'), 'w', 'keep')
 
         # record the blotter for each trader
-        bdump = open(sess_id+'_blotters.csv', 'w')
+        bdump = open(os.path.join(dump_dir,f'{sess_id}_blotters.csv'), 'w')
         for t in traders:
             bdump.write('%s, %d\n'% (traders[t].tid, len(traders[t].blotter)))
             for b in traders[t].blotter:
@@ -1451,26 +1456,46 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, tdu
 
 #############################
 
-# # Below here is where we set up and run a series of experiments
+class Drift(Brownian):
+    def __init__(self, deltaT, dt, s0, musig) -> None:
+        """
+        Params:
+        dT - Duration, for plug and play with BSE
+        metadata - Metadata for the drift
+        stock price generates GBM with drift using 
+        functions defined below.
+        """
+        
+        # Get the total number of time steps
+        super().__init__(s0=s0)
+        self.n_steps = int(deltaT/dt)
 
-class GBMOffset(Brownian):
-    def __init__(self, dt, deltaT, mu_fn, sigma_fn) -> None:
-        super().__init__()
+        self.gbm_offset_vec = self.stock_price(mu_fn=musig.sig, \
+            sigma_fn=musig.mu, dt=dt, deltaT=deltaT)
         self.dt = dt
-        self.gbm_offset_vec = self.stock_price(mu_fn=mu_fn, sigma_fn=sigma_fn, dt=dt, deltaT=deltaT)
+        self.meta_data = {
+            'drift_type': 'abrupt',
+            'drift_times': ['1.9293','38.9383'],
+            'params_varied': ['mu','sigma'],
+        }
 
-        np.save('./offset.npy', np.array(self.gbm_offset_vec))
+    
+    def dump_offset(self, path):
+        np.save(path, np.array(self.gbm_offset_vec))
 
-    def GBM_schedule_offsetfn(self, t):
-        # get index for time t
-        # return item
+    def offset_fn(self, t):
+        """
+        Returns the offset 
+        """
         try:
             offset = self.gbm_offset_vec[math.floor(t/self.dt)]
             return int(round(offset, 0))
         except:
-            # For some reason, some time idx seem to go off the end
+            # If time IDX is clipped return the last value at the end
             print('WARNING: schedule offset clipped')
             return int(round(self.gbm_offset_vec[-1],0))
+
+
 
 if __name__ == "__main__":
     print( """
@@ -1485,126 +1510,85 @@ if __name__ == "__main__":
 
     # set up common parameters for all market sessions
     start_time = 0.0
-    end_time = 2400.0
+    end_time = 600.0
     duration = end_time - start_time
+    dt = 0.0125
+
+    pickle_dir = '/Users/charleshjpearce/Desktop/test/pickles'
+    root_dir = '/Users/charleshjpearce/Desktop/test/dump'
+
+    n_trials = 3
+    
+    # Pickles in pickle dir
+    pickle_list = os.listdir(pickle_dir)
 
     # To give the appearance of GBM, a function can be generated for the 
     # schedule offset function
-    dt = 0.0125
-    sigma_fn = lambda x: 0.6 # define volatitlity function
-    mu_fn = lambda x: 0.18 # define drift function
-    
-    # Create class
-    gmbo = GBMOffset(dt=1, deltaT=duration, mu_fn=mu_fn, sigma_fn=sigma_fn)
-    
-    # Assign function to varible
-    GBMOffsetFN = gmbo.GBM_schedule_offsetfn
-    
-    
-    # Here is an example of how to use the offset function
-    #
-    # range1 = (10, 190, schedule_offsetfn)
-    # range2 = (200,300, schedule_offsetfn)
 
-    # Here is an example of how to switch from range1 to range2 and then back to range1,
-    # introducing two "market shocks"
-    # -- here the timings of the shocks are at 1/3 and 2/3 into the duration of the session.
-    #
-    # supply_schedule = [ {'from':start_time, 'to':duration/3, 'ranges':[range1], 'stepmode':'fixed'},
-    #                     {'from':duration/3, 'to':2*duration/3, 'ranges':[range2], 'stepmode':'fixed'},
-    #                     {'from':2*duration/3, 'to':end_time, 'ranges':[range1], 'stepmode':'fixed'}
-    #                   ]
+    # Do in paralell?
+    for pkl_f in pickle_list:
+        print(pkl_f)
+        # Location of pickle
+        pickle_loc = os.path.join(pickle_dir, pkl_f)
 
-    # The code below sets up symmetric supply and demand curves at prices from 50 to 150, P0=100
+        # Make pickle directory in root
+        root_pickle_dir = os.path.join(root_dir,pkl_f)
 
-    range1 = (100, 120, GBMOffsetFN)
-    supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}
-                       ]
+        try:
+            os.makedirs(root_pickle_dir)
+        except:
+            print('unable to create pickle dir, probably exists')
+        
+        with open(pickle_loc, 'rb') as pkl:
+            drift = pickle.load(pkl, encoding='bytes')
 
-    range2 = (100, 120, GBMOffsetFN)
-    demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}
-                       ]
+        for t in range(n_trials):
+            # Loop over trials, for running in parallel turn this into a function.
 
-    order_sched = {'sup': supply_schedule, 'dem': demand_schedule,
-                   'interval': 30, 'timemode': 'drip-poisson'}
-    # Use 'periodic' if you want the traders' assignments to all arrive simultaneously & periodically
-    #               'interval': 30, 'timemode': 'periodic'}
+            # Assign function to varible
+            GMB = Drift(deltaT=duration, dt=dt, s0=50, musig=drift)
+            GMB.dump_offset(os.path.join(root_pickle_dir,f'offset_{t}.npy'))
+            GBMOffsetFN = GMB.offset_fn
+            
+            # Set up demand and supply schedules from offset function generated
+            range1 = (100, 120, GBMOffsetFN)
+            supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'fixed'}
+                            ]
 
-    buyers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
-    sellers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
+            range2 = (100, 120, GBMOffsetFN)
+            demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'fixed'}
+                            ]
 
-    traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
+            order_sched = {'sup': supply_schedule, 'dem': demand_schedule,
+                        'interval': 30, 'timemode': 'drip-poisson'}
+            # Use 'periodic' if you want the traders' assignments to all arrive simultaneously & periodically
+            #               'interval': 30, 'timemode': 'periodic'}
 
-    # run a sequence of trials, one session per trial
+            buyers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
+            sellers_spec = [('GVWY',10),('SHVR',10),('ZIC',10),('ZIP',10)]
 
-    verbose = False
+            traders_spec = {'sellers':sellers_spec, 'buyers':buyers_spec}
 
-    # n_trials is how many trials (i.e. market sessions) to run in total
-    n_trials = 1
+            # run a sequence of trials, one session per trial
 
-    # n_recorded is how many trials (i.e. market sessions) to write full data-files for
-    n_trials_recorded = 3
+            verbose = False
 
-    tdump=open('avg_balance.csv','w')
+            # n_trials is how many trials (i.e. market sessions) to run in total
+            n_trials = 1
 
-    trial = 1
+            # n_recorded is how many trials (i.e. market sessions) to write full data-files for
+            n_trials_recorded = 3
 
-    while trial < (n_trials+1):
-        trial_id = 'sess%04d' % trial
+            tdump=open(f'{root_pickle_dir}/avg_balance_{t}.csv','w')
 
-        if trial > n_trials_recorded:
-            dump_all = False
-        else:
             dump_all = True
 
-        dump_all = True
+            market_session(t, start_time, end_time, traders_spec, order_sched, tdump, dump_all, verbose, dump_dir=root_pickle_dir)
+            tdump.flush()
 
-        market_session(trial_id, start_time, end_time, traders_spec, order_sched, tdump, dump_all, verbose)
-        tdump.flush()
-        trial = trial + 1
+            tdump.close()
 
-    tdump.close()
 
-    # run a sequence of trials that exhaustively varies the ratio of four trader types
-    # NB this has weakness of symmetric proportions on buyers/sellers -- combinatorics of varying that are quite nasty
-    #
-    # n_trader_types = 4
-    # equal_ratio_n = 4
-    # n_trials_per_ratio = 50
-    #
-    # n_traders = n_trader_types * equal_ratio_n
-    #
-    # fname = 'balances_%03d.csv' % equal_ratio_n
-    #
-    # tdump = open(fname, 'w')
-    #
-    # min_n = 1
-    #
-    # trialnumber = 1
-    # trdr_1_n = min_n
-    # while trdr_1_n <= n_traders:
-    #     trdr_2_n = min_n
-    #     while trdr_2_n <= n_traders - trdr_1_n:
-    #         trdr_3_n = min_n
-    #         while trdr_3_n <= n_traders - (trdr_1_n + trdr_2_n):
-    #             trdr_4_n = n_traders - (trdr_1_n + trdr_2_n + trdr_3_n)
-    #             if trdr_4_n >= min_n:
-    #                 buyers_spec = [('GVWY', trdr_1_n), ('SHVR', trdr_2_n),
-    #                                ('ZIC', trdr_3_n), ('ZIP', trdr_4_n)]
-    #                 sellers_spec = buyers_spec
-    #                 traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec}
-    #                 # print buyers_spec
-    #                 trial = 1
-    #                 while trial <= n_trials_per_ratio:
-    #                     trial_id = 'trial%07d' % trialnumber
-    #                     market_session(trial_id, start_time, end_time, traders_spec,
-    #                                    order_sched, tdump, False, True)
-    #                     tdump.flush()
-    #                     trial = trial + 1
-    #                     trialnumber = trialnumber + 1
-    #             trdr_3_n += 1
-    #         trdr_2_n += 1
-    #     trdr_1_n += 1
-    # tdump.close()
-    #
-    # print(trialnumber)
+"""
+Order book, transactions, blotters, equilbrium price, avg_balances for each experiement.
+"""
