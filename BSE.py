@@ -1470,16 +1470,8 @@ class Drift(Brownian):
         super().__init__(s0=s0)
         self.n_steps = int(deltaT/dt)
 
-        self.gbm_offset_vec = self.stock_price(mu_fn=musig.sig, \
-            sigma_fn=musig.mu, dt=dt, deltaT=deltaT)
-        self.dt = dt
-        self.meta_data = {
-            'drift_type': 'abrupt',
-            'drift_times': ['1.9293','38.9383'],
-            'params_varied': ['mu','sigma'],
-        }
-
-    
+        self.gbm_offset_vec = self.stock_price(deltaT=52,dt=0.1,mu_fn=musig.mu,sigma_fn=musig.sig)
+        
     def dump_offset(self, path):
         np.save(path, np.array(self.gbm_offset_vec))
 
